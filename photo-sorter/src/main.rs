@@ -8,6 +8,16 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
+fn month_to_quarter(month: u8) -> &'static str {
+    match month {
+        1 | 2 | 3 => "01 kvartal ⛄",    // Q1
+        4 | 5 | 6 => "02 kvartal 🌺",    // Q2
+        7 | 8 | 9 => "03 kvartal 🌅",    // Q3
+        10 | 11 | 12 => "04 kvartal 🍁", // Q4
+        _ => "unknown",
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Read CLI args (std::env::args)
     let args: Vec<String> = env::args().collect();
@@ -18,11 +28,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Sorting directory: {input_dir}");
     println!("Output directory: {}", output_dir.display());
 
+    fs::create_dir(&output_dir)?;
+
     // Step 2: Walk files recursively (walkdir)
     for entry in WalkDir::new(&input_dir) {
         let entry = entry?;
 
         let filename = entry.file_name();
+        let extension = entry.path().extension();
+
         let source_path = PathBuf::from(entry.path());
 
         if !entry.file_type().is_file() {
@@ -35,7 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut buf_reader = BufReader::new(&file);
 
         let exif_reader = exif::Reader::new();
-        let exif = exif_reader.read_from_container(&mut buf_reader)?;
+        let exif = match exif_reader.read_from_container(&mut buf_reader) {
+            Ok(e) => e,
+            Err(_) => {
+                // TODO: collecto to hash map and log at end
+                println!("⏩ skipped {:?} file", filename);
+                continue;
+            }
+        };
 
         let mut year: Option<u16> = None;
         let mut month: Option<u8> = None;
@@ -57,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (Some(y), Some(m)) => {
                 let mut p = output_dir.clone();
                 p.push(y.to_string());
-                p.push(m.to_string());
+                p.push(month_to_quarter(m));
                 p
             }
             _ => {
@@ -71,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Moving this to: {}", target_dir.display());
 
         // Step 5: Create folders if missing (std::fs::create_dir_all)
-        std::fs::create_dir_all(&target_dir)?;
+        fs::create_dir_all(&target_dir)?;
 
         // Step 6: Copy file (std::fs::copy)
         match fs::copy(&source_path, {
