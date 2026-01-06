@@ -8,6 +8,8 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
+use std::collections::HashMap;
+
 fn month_to_quarter(month: u8) -> &'static str {
     match month {
         1 | 2 | 3 => "01 kvartal ⛄",    // Q1
@@ -18,6 +20,10 @@ fn month_to_quarter(month: u8) -> &'static str {
     }
 }
 
+fn print_separator() {
+    println!("========================");
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Read CLI args (std::env::args)
     let args: Vec<String> = env::args().collect();
@@ -25,22 +31,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output_dir = PathBuf::from("sorted");
 
-    println!("Sorting directory: {input_dir}");
-    println!("Output directory: {}", output_dir.display());
+    // Header
+    print_separator();
+    println!("In Dir  : {input_dir}");
+    println!("Out Dir : {}", output_dir.display());
+    print_separator();
 
     fs::create_dir(&output_dir)?;
+
+    let mut skipped: HashMap<String, u32> = HashMap::new();
+    let mut moved: HashMap<String, u32> = HashMap::new();
 
     // Step 2: Walk files recursively (walkdir)
     for entry in WalkDir::new(&input_dir) {
         let entry = entry?;
 
         let filename = entry.file_name();
-        let extension = entry.path().extension();
+        let extension = entry
+            .path()
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("unknown");
 
         let source_path = PathBuf::from(entry.path());
 
         if !entry.file_type().is_file() {
-            // TODO: check is_dir() and do walk + sort for each inner dir
             continue;
         }
 
@@ -52,8 +67,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let exif = match exif_reader.read_from_container(&mut buf_reader) {
             Ok(e) => e,
             Err(_) => {
-                // TODO: collecto to hash map and log at end
-                println!("⏩ skipped {:?} file", filename);
+                // TODO: don't skip .MOV just move to /filmer / .MOV datestamp?
+                skipped
+                    .entry(String::from(extension))
+                    .and_modify(|v| *v += 1)
+                    .or_insert(1);
+
                 continue;
             }
         };
@@ -83,26 +102,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             _ => {
                 let mut p = output_dir.clone();
-                p.push("unknown");
+                p.push("dato_ukjent");
                 p
             }
         };
-
-        println!("Found original date!");
-        println!("Moving this to: {}", target_dir.display());
 
         // Step 5: Create folders if missing (std::fs::create_dir_all)
         fs::create_dir_all(&target_dir)?;
 
         // Step 6: Copy file (std::fs::copy)
-        match fs::copy(&source_path, {
+        let copy_result = fs::copy(&source_path, {
             let mut p = target_dir.clone();
             p.push(&filename);
             p
-        }) {
-            Ok(_) => println!("✅ copied"),
-            Err(e) => println!("❌ failed: {e}"),
-        };
+        });
+
+        if let Err(e) = copy_result {
+            println!("   ↳ ❌ copy failed: {e}");
+        } else {
+            moved
+                .entry(String::from(extension))
+                .and_modify(|v| *v += 1)
+                .or_insert(1);
+        }
+    }
+
+    // Summary: skipped files
+    if !skipped.is_empty() {
+        println!("Skipped:");
+        for (key, value) in &skipped {
+            println!("  {} .{} files", value, key);
+        }
+        print_separator();
+    }
+
+    // Summary: moved files
+    if !moved.is_empty() {
+        println!("Moved:");
+        for (key, value) in &moved {
+            println!("  {} .{} files", value, key);
+        }
+        print_separator();
     }
 
     Ok(())
