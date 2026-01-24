@@ -67,11 +67,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let exif = match exif_reader.read_from_container(&mut buf_reader) {
             Ok(e) => e,
             Err(_) => {
-                // TODO: don't skip .MOV just move to /filmer / .MOV datestamp?
-                skipped
-                    .entry(String::from(extension))
-                    .and_modify(|v| *v += 1)
-                    .or_insert(1);
+                let dir = if extension.eq_ignore_ascii_case("mov") {
+                    output_dir.join("filmer")
+                } else {
+                    output_dir
+                        .join("hoppet_over")
+                        .join(extension.to_ascii_lowercase())
+                };
+
+                fs::create_dir_all(&dir)?;
+                let mut dest = dir;
+                dest.push(&filename);
+                fs::copy(&source_path, &dest)?;
+
+                if extension.eq_ignore_ascii_case("mov") {
+                    moved
+                        .entry(extension.to_string())
+                        .and_modify(|v| *v += 1)
+                        .or_insert(1);
+                } else {
+                    skipped
+                        .entry(extension.to_string())
+                        .and_modify(|v| *v += 1)
+                        .or_insert(1);
+                }
 
                 continue;
             }
